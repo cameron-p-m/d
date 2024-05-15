@@ -1,6 +1,6 @@
 #### d
 
-d is for organization of source files. It organizes things like this `~/src/github/[owner]/[repo]` and allows easy naviagtion and cloning (coming soon) in this format.
+d is for organization of source files. It organizes things like this `~/src/github.com/[owner]/[repo]` and allows easy naviagtion and cloning (coming soon) in this format.
 
 ```
 ➜  d                                                                                                             
@@ -12,12 +12,11 @@ usage:
 desired: breakdown
 
 top:
-2 /Users/cameronmorgan/src/github/cameron-p-m/breakdown
-2 /Users/cameronmorgan/src/github/cameron-p-m/breakdown-server
-24 /Users/cameronmorgan/src/github/cameron-p-m/BreakdownOld
-24 /Users/cameronmorgan/src/github/cameron-p-m/BreakdownSwiftData
+2 /Users/cameronmorgan/src/github.com/cameron-p-m/breakdown
+2 /Users/cameronmorgan/src/github.com/cameron-p-m/breakdown-two
+24 /Users/cameronmorgan/src/github.com/cameron-p-m/breakdown-three
 command:
- cd /Users/cameronmorgan/src/github/cameron-p-m/breakdown
+ cd /Users/cameronmorgan/src/github.com/cameron-p-m/breakdown
 
 ```
 
@@ -27,4 +26,6 @@ Only works for zsh for now because that's what I use. Requires HOME env variable
 
 ```
 ./install
+
+source ~/.zshrc <- reload shell
 ```
