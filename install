@@ -1,0 +1,12 @@
+zig build -Doptimize=ReleaseFast
+# Ensure ~/.d/bin exists
+mkdir -p ~/.d/bin
+
+# Copy dd binary to ~/.d/bin, overwrite if it already exists
+cp -f ./zig-out/bin/dd ~/.d/bin
+
+# Copy d binary to ~/.d/bin, overwrite if it already exists
+cp -f ./d ~/.d/bin
+
+# Add sourcing of d script to ~/.zshrc if not already present
+grep -qxF 'source ~/.d/bin/d' ~/.zshrc || echo 'source ~/.d/bin/d' >> ~/.zshrc
