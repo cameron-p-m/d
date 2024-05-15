@@ -55,7 +55,7 @@ fn parseArgs() !Args {
 
     // should support more hosts
     const srcPath = "src";
-    const hostPath = "github";
+    const hostPath = "github.com";
 
     var homePath = std.os.getenv(HOME) orelse {
         std.debug.print("no HOME env var found", .{});
