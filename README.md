@@ -25,7 +25,7 @@ command:
 Only works for zsh for now because that's what I use. Requires HOME env variable.
 
 ```
-./install
+./scripts/install.sh
 
 source ~/.zshrc <- reload shell
 ```
