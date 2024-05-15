@@ -5,10 +5,10 @@ d is for organization of source files. It organizes things like this `~/src/gith
 ```
 ➜  d                                                                                                             
 usage:
- d [desired_path]
-   -v verbose
+ d cd [desired] [optional_flags]
+   -v verbose output
 
-➜  d -v breakdown                                                                                                
+➜  d cd -v breakdown                                                                                                
 desired: breakdown
 
 top:
