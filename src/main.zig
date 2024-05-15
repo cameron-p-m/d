@@ -7,7 +7,7 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    const args = try parseArgs();
+    const args = try parseArgs(arena.allocator());
 
     var dir = try createOrOpenDir(arena.allocator(), args);
     defer dir.close();
@@ -27,27 +27,40 @@ pub fn main() !void {
     }
 }
 
-fn parseArgs() !Args {
-    var args = std.process.args();
-    var desiredPath: [:0]const u8 = undefined;
+fn parseArgs(allocator: std.mem.Allocator) !Args {
+    var desiredPath: [:0]const u8 = "";
     var verbose = false;
-    var first = true;
-    var second = false;
-    while (args.next()) |arg| {
-        if (first) {
-            first = false;
+    var invalidArgs = false;
+
+    var args = try std.process.argsAlloc(allocator);
+
+    for (args, 0..) |arg, i| {
+        // binary is first arg
+        if (i == 0) {
             continue;
         }
-        second = true;
+        if (i == 1) {
+            if (!std.mem.eql(u8, arg, "cd")) {
+                invalidArgs = true;
+                break;
+            } else {
+                continue;
+            }
+        }
+
         if (std.mem.eql(u8, arg, "-v")) {
             verbose = true;
             continue;
         }
+
         desiredPath = arg;
     }
 
-    if (!second) {
-        std.debug.print("usage: \n d [desired]\n   -v verbose\n", .{});
+    if (std.mem.eql(u8, desiredPath, "")) {
+        invalidArgs = true;
+    }
+    if (invalidArgs) {
+        std.debug.print("usage: \n d cd [desired] [optional_flags]\n   -v verbose output\n", .{});
         std.process.exit(2);
     }
 

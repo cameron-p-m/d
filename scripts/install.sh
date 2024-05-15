@@ -1,4 +1,4 @@
-zig build -Doptimize=ReleaseFast
+zig build -Doptimize=ReleaseSmall
 
 # Ensure ~/.d/bin exists
 mkdir -p ~/.d/bin
