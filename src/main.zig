@@ -32,7 +32,7 @@ fn parseArgs(allocator: std.mem.Allocator) !Args {
     var verbose = false;
     var invalidArgs = false;
 
-    var args = try std.process.argsAlloc(allocator);
+    const args = try std.process.argsAlloc(allocator);
 
     for (args, 0..) |arg, i| {
         // binary is first arg
@@ -70,8 +70,8 @@ fn parseArgs(allocator: std.mem.Allocator) !Args {
     const srcPath = "src";
     const hostPath = "github.com";
 
-    var homePath = std.os.getenv(HOME) orelse {
-        std.debug.print("no HOME env var found", .{});
+    const homePath = std.process.getEnvVarOwned(allocator, HOME) catch |err| {
+        std.debug.print("no HOME env var found {any}", .{err});
         std.process.exit(2);
     };
 
@@ -91,11 +91,11 @@ fn printDebugInfo(cadidates: []rank.Candidate) void {
     std.debug.print("command:\n cd {s}\n", .{cadidates[0].str});
 }
 
-fn createOrOpenDir(allocator: std.mem.Allocator, args: Args) !std.fs.IterableDir {
+fn createOrOpenDir(allocator: std.mem.Allocator, args: Args) !std.fs.Dir {
     const slicePath = &[_][]const u8{ args.homePath, args.srcPath, args.hostPath };
     const result = try std.mem.join(allocator, "/", slicePath);
 
-    var fileDir = std.fs.openIterableDirAbsolute(result, .{}) catch |e|
+    const fileDir = std.fs.openDirAbsolute(result, .{}) catch |e|
         switch (e) {
         error.FileNotFound => {
             std.log.info("first run, creating {s}", .{result});
@@ -110,7 +110,7 @@ fn createOrOpenDir(allocator: std.mem.Allocator, args: Args) !std.fs.IterableDir
                 },
                 else => return err2,
             };
-            return try std.fs.openIterableDirAbsolute(result, .{});
+            return try std.fs.openDirAbsolute(result, .{});
         },
         else => return e,
     };
@@ -118,16 +118,16 @@ fn createOrOpenDir(allocator: std.mem.Allocator, args: Args) !std.fs.IterableDir
     return fileDir;
 }
 
-pub fn getCandidates(allocator: std.mem.Allocator, path: std.fs.IterableDir, args: Args) !std.ArrayList([]const u8) {
+pub fn getCandidates(allocator: std.mem.Allocator, dir: std.fs.Dir, args: Args) !std.ArrayList([]const u8) {
     var candidates = try std.ArrayList([]const u8).initCapacity(allocator, 50);
 
-    var iterator = path.iterate();
+    var iterator = dir.iterate();
     while (try iterator.next()) |entry| {
         if (entry.kind != std.fs.File.Kind.directory) {
             continue;
         }
         const newPath = try std.mem.join(allocator, "/", &[_][]const u8{ args.homePath, args.srcPath, args.hostPath, entry.name });
-        var entryDir = try std.fs.openIterableDirAbsolute(newPath, .{});
+        var entryDir = try std.fs.openDirAbsolute(newPath, .{});
         defer entryDir.close();
         var entryIterator = entryDir.iterate();
         while (try entryIterator.next()) |subEntry| {
