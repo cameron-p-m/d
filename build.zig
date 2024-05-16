@@ -1,9 +1,12 @@
 const std = @import("std");
 
+const zig_version = "0.12.0";
+
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
 pub fn build(b: *std.Build) void {
+    const runtime_zig = comptime std.SemanticVersion.parse(zig_version) catch unreachable;
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -23,6 +26,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .single_threaded = true,
+        .version = runtime_zig,
     });
 
     // This declares intent for the executable to be installed into the
@@ -55,11 +59,7 @@ pub fn build(b: *std.Build) void {
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
-    const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
-        .target = target,
-        .optimize = optimize,
-    });
+    const unit_tests = b.addTest(.{ .root_source_file = .{ .path = "src/main.zig" }, .target = target, .optimize = optimize, .version = runtime_zig });
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
