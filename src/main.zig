@@ -1,7 +1,25 @@
 const std = @import("std");
 const rank = @import("rank.zig");
 
-const Args = struct { homePath: []const u8, srcPath: []const u8, hostPath: []const u8, destination: []const u8, verbose: bool };
+const help: []const u8 =
+    \\usage:
+    \\  d <command> [options]
+    \\commands:
+    \\  cd      navigate
+    \\  clone   clone repo
+    \\options:
+    \\  -v      verbose output
+    \\
+;
+
+const Command = enum {
+    cd,
+    clone,
+};
+
+const Args = struct { cmd: Command, homePath: []const u8, srcPath: []const u8, hostPath: []const u8, destination: []const u8, verbose: bool };
+
+const ErrInvalidPath = error{};
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -9,28 +27,23 @@ pub fn main() !void {
 
     const args = try parseArgs(arena.allocator());
 
-    var dir = try createOrOpenDir(arena.allocator(), args);
-    defer dir.close();
-
-    var candidates = try getCandidates(arena.allocator(), dir, args);
-    defer candidates.deinit();
-
-    const filtered = try rank.rankCandidates(arena.allocator(), candidates.items, args.destination, true);
-
-    if (filtered.len > 0) {
-        if (args.verbose) {
-            printDebugInfo(filtered);
-        }
-        _ = try std.io.getStdOut().writer().print("cd {s}", .{filtered[0].str});
-    } else {
+    const command = switch (args.cmd) {
+        .cd => try handleCdCommand(arena.allocator(), args),
+        .clone => try handleCloneCommand(arena.allocator(), args),
+    } orelse {
         std.debug.print("no match found\n", .{});
-    }
+        std.process.exit(1);
+    };
+
+    const stdout = std.io.getStdOut().writer();
+    _ = try stdout.write(command);
 }
 
 fn parseArgs(allocator: std.mem.Allocator) !Args {
     var desiredPath: [:0]const u8 = "";
     var verbose = false;
     var invalidArgs = false;
+    var command: Command = .cd;
 
     const args = try std.process.argsAlloc(allocator);
 
@@ -40,12 +53,11 @@ fn parseArgs(allocator: std.mem.Allocator) !Args {
             continue;
         }
         if (i == 1) {
-            if (!std.mem.eql(u8, arg, "cd")) {
+            command = std.meta.stringToEnum(Command, arg) orelse {
                 invalidArgs = true;
                 break;
-            } else {
-                continue;
-            }
+            };
+            continue;
         }
 
         if (std.mem.eql(u8, arg, "-v")) {
@@ -60,8 +72,8 @@ fn parseArgs(allocator: std.mem.Allocator) !Args {
         invalidArgs = true;
     }
     if (invalidArgs) {
-        std.debug.print("usage: \n d cd [desired] [optional_flags]\n   -v verbose output\n", .{});
-        std.process.exit(2);
+        std.debug.print(help, .{});
+        std.process.exit(1);
     }
 
     const HOME = "HOME";
@@ -79,7 +91,98 @@ fn parseArgs(allocator: std.mem.Allocator) !Args {
         std.debug.print("desired: {s}\n\n", .{desiredPath});
     }
 
-    return Args{ .homePath = homePath, .srcPath = srcPath, .hostPath = hostPath, .destination = desiredPath, .verbose = verbose };
+    return Args{ .cmd = command, .homePath = homePath, .srcPath = srcPath, .hostPath = hostPath, .destination = desiredPath, .verbose = verbose };
+}
+
+fn handleCdCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
+    var dir = try createOrOpenDir(allocator, args);
+    defer dir.close();
+
+    var candidates = try getCandidates(allocator, dir, args);
+    defer candidates.deinit();
+
+    const filtered = try rank.rankCandidates(allocator, candidates.items, args.destination, true);
+
+    if (filtered.len > 0) {
+        if (args.verbose) {
+            printDebugInfo(filtered);
+        }
+        return try std.mem.concat(allocator, comptime u8, &[_][]const u8{ "cd ", filtered[0].str });
+    }
+
+    return null;
+}
+
+// hadles https://github.com/cameron-p-m/dotfiles.git
+// git clone git@github.com:cameron-p-m/dotfiles.git /Users/cameronmorgan/src/github.com/cameron-p-m/dotfiles-test && cd /Users/cameronmorgan/src/github.com/cameron-p-m/dotfiles-test
+fn handleCloneCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
+    const partsCleaned = std.mem.trimRight(u8, args.destination, "/");
+    var parts = std.mem.splitSequence(u8, partsCleaned, "/");
+
+    var owner: []const u8 = "";
+    var path: []const u8 = "";
+
+    var prevPart: ?[]const u8 = null;
+    var currentPart: ?[]const u8 = null;
+
+    while (parts.next()) |part| {
+        prevPart = currentPart;
+        currentPart = part;
+    }
+
+    owner = prevPart orelse return try std.mem.concat(allocator, comptime u8, &[_][]const u8{ "git clone ", args.destination });
+    path = currentPart orelse return try std.mem.concat(allocator, comptime u8, &[_][]const u8{ "git clone ", args.destination });
+
+    // Trim ".git" suffix if present
+    const gitSuffix = ".git";
+    if (std.mem.endsWith(u8, path, gitSuffix)) {
+        path = path[0 .. path.len - gitSuffix.len];
+    }
+
+    var newOwner = std.mem.splitSequence(u8, owner, ":");
+    while (newOwner.next()) |part| {
+        owner = part;
+    }
+
+    const destinationPath = try std.mem.join(allocator, "/", &[_][]const u8{ args.homePath, args.srcPath, args.hostPath, owner, path });
+    defer allocator.free(destinationPath);
+    const concatenated = try std.mem.concat(allocator, comptime u8, &[_][]const u8{ "git clone ", args.destination, " ", destinationPath, " && cd ", destinationPath });
+    return concatenated;
+}
+
+test "handle clone" {
+    const alloc = std.testing.allocator;
+
+    var args = Args{
+        .cmd = .clone,
+        .destination = "",
+        .homePath = "/Users/testuser",
+        .hostPath = "github.com",
+        .srcPath = "src",
+        .verbose = false,
+    };
+
+    const testCases = [_]struct {
+        destination: []const u8,
+        expected: []const u8,
+    }{
+        .{ .destination = "git@github.com:cameron-p-m/test.git", .expected = "git clone git@github.com:cameron-p-m/test.git /Users/testuser/src/github.com/cameron-p-m/test && cd /Users/testuser/src/github.com/cameron-p-m/test" },
+        .{ .destination = "https://github.com/cameron-p-m/test.git", .expected = "git clone https://github.com/cameron-p-m/test.git /Users/testuser/src/github.com/cameron-p-m/test && cd /Users/testuser/src/github.com/cameron-p-m/test" },
+        .{ .destination = "git@github.com:cameron-p-m/test", .expected = "git clone git@github.com:cameron-p-m/test /Users/testuser/src/github.com/cameron-p-m/test && cd /Users/testuser/src/github.com/cameron-p-m/test" },
+        .{ .destination = "git@github.com/", .expected = "git clone git@github.com/" },
+        .{ .destination = "https://github.com/cameron-p-m/subdir/test.git", .expected = "git clone https://github.com/cameron-p-m/subdir/test.git /Users/testuser/src/github.com/subdir/test && cd /Users/testuser/src/github.com/subdir/test" },
+        .{ .destination = "https://github.com/cameron-p-m/test.git/", .expected = "git clone https://github.com/cameron-p-m/test.git/ /Users/testuser/src/github.com/cameron-p-m/test && cd /Users/testuser/src/github.com/cameron-p-m/test" },
+        .{ .destination = "https://github.com/cameron-p-m/test.repo.git", .expected = "git clone https://github.com/cameron-p-m/test.repo.git /Users/testuser/src/github.com/cameron-p-m/test.repo && cd /Users/testuser/src/github.com/cameron-p-m/test.repo" },
+        .{ .destination = "git@github.com:another-user/test.git", .expected = "git clone git@github.com:another-user/test.git /Users/testuser/src/github.com/another-user/test && cd /Users/testuser/src/github.com/another-user/test" },
+        .{ .destination = "https://github.com:another-user/test.git", .expected = "git clone https://github.com:another-user/test.git /Users/testuser/src/github.com/another-user/test && cd /Users/testuser/src/github.com/another-user/test" },
+    };
+
+    for (testCases) |testCase| {
+        args.destination = testCase.destination;
+        const out = try handleCloneCommand(alloc, args) orelse return try std.testing.expect(false);
+        defer alloc.free(out);
+        try std.testing.expectEqualStrings(testCase.expected, out);
+    }
 }
 
 fn printDebugInfo(cadidates: []rank.Candidate) void {

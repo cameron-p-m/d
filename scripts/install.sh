@@ -1,10 +1,6 @@
 if ! command -v zig &> /dev/null
 then
-    echo "zig is not installed. Installing..."
-    # Install zig using Homebrew
     brew install zig
-else
-    echo "zig installed, proceeding"
 fi
 
 zig build -Doptimize=ReleaseSmall
