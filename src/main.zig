@@ -19,8 +19,6 @@ const Command = enum {
 
 const Args = struct { cmd: Command, homePath: []const u8, srcPath: []const u8, hostPath: []const u8, destination: []const u8, verbose: bool };
 
-const ErrInvalidPath = error{};
-
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -102,7 +100,6 @@ fn handleCdCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
     defer candidates.deinit();
 
     const filtered = try rank.rankCandidates(allocator, candidates.items, args.destination, true);
-
     if (filtered.len > 0) {
         if (args.verbose) {
             printDebugInfo(filtered);
@@ -113,8 +110,6 @@ fn handleCdCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
     return null;
 }
 
-// hadles https://github.com/cameron-p-m/dotfiles.git
-// git clone git@github.com:cameron-p-m/dotfiles.git /Users/cameronmorgan/src/github.com/cameron-p-m/dotfiles-test && cd /Users/cameronmorgan/src/github.com/cameron-p-m/dotfiles-test
 fn handleCloneCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
     const partsCleaned = std.mem.trimRight(u8, args.destination, "/");
     var parts = std.mem.splitSequence(u8, partsCleaned, "/");
@@ -197,23 +192,23 @@ fn printDebugInfo(cadidates: []rank.Candidate) void {
 fn createOrOpenDir(allocator: std.mem.Allocator, args: Args) !std.fs.Dir {
     const slicePath = &[_][]const u8{ args.homePath, args.srcPath, args.hostPath };
     const result = try std.mem.join(allocator, "/", slicePath);
-
-    const fileDir = std.fs.openDirAbsolute(result, .{}) catch |e|
+    defer allocator.free(result);
+    const fileDir = std.fs.cwd().openDir(result, .{}) catch |e|
         switch (e) {
         error.FileNotFound => {
             std.log.info("first run, creating {s}", .{result});
 
-            std.fs.makeDirAbsolute(result) catch |err2|
+            std.fs.cwd().makeDir(result) catch |err2|
                 switch (err2) {
                 error.FileNotFound => {
                     const absoluteSrcPath = try std.mem.join(allocator, "/", slicePath[0..2]);
-                    try std.fs.makeDirAbsolute(absoluteSrcPath);
+                    try std.fs.cwd().makeDir(absoluteSrcPath);
 
-                    try std.fs.makeDirAbsolute(result);
+                    try std.fs.cwd().makeDir(result);
                 },
                 else => return err2,
             };
-            return try std.fs.openDirAbsolute(result, .{});
+            return try std.fs.cwd().openDir(result, .{});
         },
         else => return e,
     };

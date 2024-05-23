@@ -1,10 +1,3 @@
-if ! command -v zig &> /dev/null
-then
-    brew install zig
-fi
-
-zig build -Doptimize=ReleaseSmall
-
 # Ensure ~/.d/bin exists
 mkdir -p ~/.d/bin
 

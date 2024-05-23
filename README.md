@@ -15,10 +15,14 @@ options:
 
 #### install
 
-Only works for zsh for now because that's what I use. Requires HOME env variable. This builds from source.
+Only works for zsh for now because that's what I use. Requires HOME env variable.
 
 ```
 ./scripts/install.sh
 
 source ~/.zshrc <- reload shell
 ```
+
+#### contribute
+
+If you want to contribute, this project used zig 0.12.0. You can build from source too with `zig build -Doptimize=ReleaseSmall`
