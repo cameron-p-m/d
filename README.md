@@ -7,8 +7,9 @@ d is for organization of source files. It organizes things like this `~/src/gith
 usage:
   d <command> [options]
 commands:
-  cd      navigate
-  clone   clone repo
+  cd <target>      navigate
+  clone <target>   clone repo
+  open pr          open pr on github
 options:
   -v      verbose output
 ```
@@ -25,4 +26,4 @@ source ~/.zshrc <- reload shell
 
 #### contribute
 
-If you want to contribute, this project used zig 0.12.0. You can build from source too with `zig build -Doptimize=ReleaseSmall`
+If you want to contribute, this project used zig 0.12.0. You can build from source too with `zig build`
