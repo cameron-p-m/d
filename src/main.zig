@@ -1,12 +1,15 @@
 const std = @import("std");
 const rank = @import("rank.zig");
 
+const HOME = "HOME";
+
 const help: []const u8 =
     \\usage:
     \\  d <command> [options]
     \\commands:
-    \\  cd      navigate
-    \\  clone   clone repo
+    \\  cd <target>      navigate
+    \\  clone <target>   clone repo
+    \\  open pr          open pr on github
     \\options:
     \\  -v      verbose output
     \\
@@ -15,6 +18,7 @@ const help: []const u8 =
 const Command = enum {
     cd,
     clone,
+    open,
 };
 
 const Args = struct { cmd: Command, homePath: []const u8, srcPath: []const u8, hostPath: []const u8, destination: []const u8, verbose: bool };
@@ -23,11 +27,20 @@ pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    const args = try parseArgs(arena.allocator());
+    const args = parseArgs(arena.allocator()) catch |e| {
+        switch (e) {
+            error.InvalidArgs => {
+                std.debug.print(help, .{});
+                std.process.exit(1);
+            },
+            else => return e,
+        }
+    };
 
     const command = switch (args.cmd) {
         .cd => try handleCdCommand(arena.allocator(), args),
         .clone => try handleCloneCommand(arena.allocator(), args),
+        .open => try handleOpenPRCommand(arena.allocator()),
     } orelse {
         std.debug.print("no match found\n", .{});
         std.process.exit(1);
@@ -37,59 +50,36 @@ pub fn main() !void {
     _ = try stdout.write(command);
 }
 
-fn parseArgs(allocator: std.mem.Allocator) !Args {
-    var desiredPath: [:0]const u8 = "";
-    var verbose = false;
-    var invalidArgs = false;
-    var command: Command = .cd;
+const ErrorD = error{ InvalidArgs, NoHomeVar, OutOfMemory, EnvironmentVariableNotFound, Overflow, InvalidWtf8 };
 
+fn parseArgs(allocator: std.mem.Allocator) ErrorD!Args {
     const args = try std.process.argsAlloc(allocator);
+    if (args.len < 3 or args.len > 4) {
+        return ErrorD.InvalidArgs;
+    }
+    const command = std.meta.stringToEnum(Command, args[1]) orelse {
+        return ErrorD.InvalidArgs;
+    };
 
-    for (args, 0..) |arg, i| {
-        // binary is first arg
-        if (i == 0) {
-            continue;
-        }
-        if (i == 1) {
-            command = std.meta.stringToEnum(Command, arg) orelse {
-                invalidArgs = true;
-                break;
-            };
-            continue;
-        }
-
-        if (std.mem.eql(u8, arg, "-v")) {
-            verbose = true;
-            continue;
-        }
-
-        desiredPath = arg;
+    const destination = args[2];
+    if (command == .open and !std.mem.eql(u8, destination, "pr")) {
+        return ErrorD.InvalidArgs;
     }
 
-    if (std.mem.eql(u8, desiredPath, "")) {
-        invalidArgs = true;
+    var verbose = false;
+    if (args.len == 4) {
+        verbose = std.mem.eql(u8, args[3], "-v");
+        if (!verbose) {
+            return ErrorD.InvalidArgs;
+        }
     }
-    if (invalidArgs) {
-        std.debug.print(help, .{});
-        std.process.exit(1);
-    }
-
-    const HOME = "HOME";
-
-    // should support more hosts
+    // static for now
     const srcPath = "src";
     const hostPath = "github.com";
 
-    const homePath = std.process.getEnvVarOwned(allocator, HOME) catch |err| {
-        std.debug.print("no HOME env var found {any}", .{err});
-        std.process.exit(2);
-    };
+    const homePath = try std.process.getEnvVarOwned(allocator, HOME);
 
-    if (verbose) {
-        std.debug.print("desired: {s}\n\n", .{desiredPath});
-    }
-
-    return Args{ .cmd = command, .homePath = homePath, .srcPath = srcPath, .hostPath = hostPath, .destination = desiredPath, .verbose = verbose };
+    return Args{ .cmd = command, .homePath = homePath, .srcPath = srcPath, .hostPath = hostPath, .destination = destination, .verbose = verbose };
 }
 
 fn handleCdCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
@@ -110,8 +100,8 @@ fn handleCdCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
     return null;
 }
 
-fn handleCloneCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
-    const partsCleaned = std.mem.trimRight(u8, args.destination, "/");
+fn getOwnerAndPathFromUrl(url: []const u8) ?struct { owner: []const u8, path: []const u8 } {
+    const partsCleaned = std.mem.trimRight(u8, url, "/");
     var parts = std.mem.splitSequence(u8, partsCleaned, "/");
 
     var owner: []const u8 = "";
@@ -125,8 +115,8 @@ fn handleCloneCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
         currentPart = part;
     }
 
-    owner = prevPart orelse return try std.mem.concat(allocator, comptime u8, &[_][]const u8{ "git clone ", args.destination });
-    path = currentPart orelse return try std.mem.concat(allocator, comptime u8, &[_][]const u8{ "git clone ", args.destination });
+    owner = prevPart orelse return null;
+    path = currentPart orelse return null;
 
     // Trim ".git" suffix if present
     const gitSuffix = ".git";
@@ -139,7 +129,13 @@ fn handleCloneCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
         owner = part;
     }
 
-    const destinationPath = try std.mem.join(allocator, "/", &[_][]const u8{ args.homePath, args.srcPath, args.hostPath, owner, path });
+    return .{ .owner = owner, .path = path };
+}
+
+fn handleCloneCommand(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
+    const ownerAndPath = getOwnerAndPathFromUrl(args.destination) orelse return try std.mem.concat(allocator, comptime u8, &[_][]const u8{ "git clone ", args.destination });
+
+    const destinationPath = try std.mem.join(allocator, "/", &[_][]const u8{ args.homePath, args.srcPath, args.hostPath, ownerAndPath.owner, ownerAndPath.path });
     defer allocator.free(destinationPath);
     const concatenated = try std.mem.concat(allocator, comptime u8, &[_][]const u8{ "git clone ", args.destination, " ", destinationPath, " && cd ", destinationPath });
     return concatenated;
@@ -178,6 +174,46 @@ test "handle clone" {
         defer alloc.free(out);
         try std.testing.expectEqualStrings(testCase.expected, out);
     }
+}
+
+// branch=`git rev-parse --abbrev-ref HEAD`
+// rawUrl=`git config --get remote.origin.url | awk '{sub(/:/,"/")}1' | awk '{sub(/git@/,"https://")}1' | sed 's/.git$//'`
+// finalUrl="${rawUrl}/compare/${branch}?expand=1"
+
+fn handleOpenPRCommand(allocator: std.mem.Allocator) !?[]const u8 {
+
+    // Execute the first command to get the branch name
+    var branch_cmd = std.ChildProcess.init(&[_][]const u8{ "git", "rev-parse", "--abbrev-ref", "HEAD" }, allocator);
+    branch_cmd.stdout_behavior = .Pipe;
+    try branch_cmd.spawn();
+    const file = branch_cmd.stdout orelse {
+        return null;
+    };
+    const branch_output = try file.reader().readAllAlloc(allocator, std.math.maxInt(usize));
+    defer allocator.free(branch_output);
+    _ = try branch_cmd.wait();
+
+    // Strip the newline character from the branch name
+    const branch_name = branch_output[0 .. branch_output.len - 1];
+
+    // Execute the second command to get the raw URL
+    var url_cmd = std.ChildProcess.init(&[_][]const u8{ "git", "config", "--get", "remote.origin.url" }, allocator);
+    url_cmd.stdout_behavior = .Pipe;
+    try url_cmd.spawn();
+    var raw_url_output = try url_cmd.stdout.?.reader().readAllAlloc(allocator, std.math.maxInt(usize));
+    defer allocator.free(raw_url_output);
+    _ = try url_cmd.wait();
+
+    // Strip the newline character from the branch name
+    const raw_url = raw_url_output[0 .. raw_url_output.len - 1];
+
+    const ownerAndPath = getOwnerAndPathFromUrl(raw_url) orelse return null;
+    const rawUrl = try std.mem.join(allocator, "/", &[_][]const u8{ "https://github.com", ownerAndPath.owner, ownerAndPath.path });
+
+    // const final_url = try allocator.alloc(u8, raw_url.len + compare_str.len + branch_name.len + expand_str.len);
+    const final_url = try std.mem.join(allocator, "", &[_][]const u8{ "open \"", rawUrl, "/compare/", branch_name, "?expand=1\"" });
+
+    return final_url;
 }
 
 fn printDebugInfo(cadidates: []rank.Candidate) void {
