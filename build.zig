@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
-        .optimize = optimize,
+        .optimize = .ReleaseSmall,
         .single_threaded = true,
         .version = runtime_zig,
     });
