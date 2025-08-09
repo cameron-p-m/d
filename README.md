@@ -26,4 +26,4 @@ source ~/.zshrc <- reload shell
 
 #### contribute
 
-If you want to contribute, this project used zig 0.12.0. You can build from source too with `zig build`
+If you want to contribute, this project uses zig 0.14.1. You can build from source with `zig build`
