@@ -10,6 +10,8 @@ commands:
   cd <target>      navigate
   clone <target>   clone repo
   open pr          open pr on github
+  tclone [-name <name>]  create a temp working clone (optional name for branch/dir)
+  tclone list        list all temp working dirs (paths)
 options:
   -v      verbose output
 ```

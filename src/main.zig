@@ -149,8 +149,21 @@ fn handleTcloneList(allocator: std.mem.Allocator) !?[]const u8 {
     while (try it.next()) |entry| {
         if (entry.kind != .directory) continue;
         if (!std.mem.startsWith(u8, entry.name, TC_PREFIX)) continue;
-        const full = try std.mem.join(allocator, "/", &[_][]const u8{ tmpBase, entry.name });
-        try items.append(full);
+        // entry is the owner-level directory, enumerate its child dirs
+        const owner_path = try std.mem.join(allocator, "/", &[_][]const u8{ tmpBase, entry.name });
+        var owner_dir = std.fs.openDirAbsolute(owner_path, .{}) catch |e| {
+            allocator.free(owner_path);
+            return e;
+        };
+        defer owner_dir.close();
+        defer allocator.free(owner_path);
+
+        var sub_it = owner_dir.iterate();
+        while (try sub_it.next()) |sub| {
+            if (sub.kind != .directory) continue;
+            const leaf = try std.mem.join(allocator, "/", &[_][]const u8{ tmpBase, entry.name, sub.name });
+            try items.append(leaf);
+        }
     }
 
     if (items.items.len == 0) {
@@ -180,6 +193,7 @@ fn buildTcloneCreateCmd(
     raw_url: []const u8,
     tmp_base: []const u8,
     provided_suffix: []const u8,
+    local_repo_path: []const u8,
 ) ![]const u8 {
     const ownerAndPath = getOwnerAndPathFromUrl(raw_url) orelse return error.InvalidArgs;
 
@@ -198,18 +212,21 @@ fn buildTcloneCreateCmd(
     const qFull = try quoteSingle(allocator, fullPath);
     const qUrl = try quoteSingle(allocator, raw_url);
     const qBranch = try quoteSingle(allocator, branchName);
+    const qTop = try quoteSingle(allocator, local_repo_path);
 
     const cmd = try std.mem.join(allocator, "", &[_][]const u8{
-        "mkdir -p ",            qFull,
-        " && git clone ",       qUrl,
-        " ",                    qFull,
-        " && cd ",              qFull,
-        " && git checkout -b ", qBranch,
+        "mkdir -p ",                             qFull,
+        " && git clone --shared --no-checkout ", qTop,
+        " ",                                     qFull,
+        " && cd ",                               qFull,
+        " && git remote set-url origin ",        qUrl,
+        " && git checkout -b ",                  qBranch,
     });
 
     allocator.free(qBranch);
     allocator.free(qUrl);
     allocator.free(qFull);
+    allocator.free(qTop);
     allocator.free(branchName);
     allocator.free(fullPath);
     allocator.free(dirName);
@@ -228,9 +245,18 @@ fn handleTcloneCreate(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
     defer allocator.free(url_result.stderr);
     const raw_url = std.mem.trimRight(u8, url_result.stdout, "\n");
 
+    const top_result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{ "git", "rev-parse", "--show-toplevel" },
+        .max_output_bytes = 8 * 1024,
+    });
+    defer allocator.free(top_result.stdout);
+    defer allocator.free(top_result.stderr);
+    const top = std.mem.trimRight(u8, top_result.stdout, "\n");
+
     const tmp = try getTmpBasePath(allocator);
     defer allocator.free(tmp);
-    return try buildTcloneCreateCmd(allocator, raw_url, tmp, args.destination);
+    return try buildTcloneCreateCmd(allocator, raw_url, tmp, args.destination, top);
 }
 
 // tclone rm removed – users can `rm` directly
@@ -437,9 +463,10 @@ test "buildTcloneCreateCmd builds expected command with provided suffix" {
     const alloc = std.testing.allocator;
     const tmp_base = "/tmp";
     const raw_url = "git@github.com:cameron-p-m/sample.git";
-    const out = try buildTcloneCreateCmd(alloc, raw_url, tmp_base, "x");
+    const out = try buildTcloneCreateCmd(alloc, raw_url, tmp_base, "x", "/tmp/local-repo");
     defer alloc.free(out);
-    try std.testing.expect(std.mem.indexOf(u8, out, "git clone 'git@github.com:cameron-p-m/sample.git' '/tmp/d-tclone-cameron-p-m/sample-x'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "git clone --shared --no-checkout '/tmp/local-repo' '/tmp/d-tclone-cameron-p-m/sample-x'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "git remote set-url origin 'git@github.com:cameron-p-m/sample.git'") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "git checkout -b 'tclone/x'") != null);
 }
 
