@@ -194,6 +194,7 @@ fn buildTcloneCreateCmd(
     tmp_base: []const u8,
     provided_suffix: []const u8,
     local_repo_path: []const u8,
+    start_commit: []const u8,
 ) ![]const u8 {
     const ownerAndPath = getOwnerAndPathFromUrl(raw_url) orelse return error.InvalidArgs;
 
@@ -213,6 +214,7 @@ fn buildTcloneCreateCmd(
     const qUrl = try quoteSingle(allocator, raw_url);
     const qBranch = try quoteSingle(allocator, branchName);
     const qTop = try quoteSingle(allocator, local_repo_path);
+    const qStart = try quoteSingle(allocator, start_commit);
 
     const cmd = try std.mem.join(allocator, "", &[_][]const u8{
         "mkdir -p ",                             qFull,
@@ -221,12 +223,14 @@ fn buildTcloneCreateCmd(
         " && cd ",                               qFull,
         " && git remote set-url origin ",        qUrl,
         " && git checkout -b ",                  qBranch,
+        " ",                                     qStart,
     });
 
     allocator.free(qBranch);
     allocator.free(qUrl);
     allocator.free(qFull);
     allocator.free(qTop);
+    allocator.free(qStart);
     allocator.free(branchName);
     allocator.free(fullPath);
     allocator.free(dirName);
@@ -256,7 +260,17 @@ fn handleTcloneCreate(allocator: std.mem.Allocator, args: Args) !?[]const u8 {
 
     const tmp = try getTmpBasePath(allocator);
     defer allocator.free(tmp);
-    return try buildTcloneCreateCmd(allocator, raw_url, tmp, args.destination, top);
+    // get current commit hash to start branch from
+    const head_result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{ "git", "rev-parse", "HEAD" },
+        .max_output_bytes = 128,
+    });
+    defer allocator.free(head_result.stdout);
+    defer allocator.free(head_result.stderr);
+    const head = std.mem.trimRight(u8, head_result.stdout, "\n");
+
+    return try buildTcloneCreateCmd(allocator, raw_url, tmp, args.destination, top, head);
 }
 
 // tclone rm removed – users can `rm` directly
@@ -463,11 +477,11 @@ test "buildTcloneCreateCmd builds expected command with provided suffix" {
     const alloc = std.testing.allocator;
     const tmp_base = "/tmp";
     const raw_url = "git@github.com:cameron-p-m/sample.git";
-    const out = try buildTcloneCreateCmd(alloc, raw_url, tmp_base, "x", "/tmp/local-repo");
+    const out = try buildTcloneCreateCmd(alloc, raw_url, tmp_base, "x", "/tmp/local-repo", "abc123");
     defer alloc.free(out);
     try std.testing.expect(std.mem.indexOf(u8, out, "git clone --shared --no-checkout '/tmp/local-repo' '/tmp/d-tclone-cameron-p-m/sample-x'") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "git remote set-url origin 'git@github.com:cameron-p-m/sample.git'") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "git checkout -b 'tclone/x'") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "git checkout -b 'tclone/x' 'abc123'") != null);
 }
 
 test "buildTcloneDeleteCmd builds rm command absolute" {
